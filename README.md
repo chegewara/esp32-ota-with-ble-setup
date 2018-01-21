@@ -16,6 +16,5 @@ There is still few more things to do.
 - Add exceptions when domain name cant be found by dns,
 - Add more exceptions when wifi credentials are wrong (ie cant connect to AP),
 - Add https server as option
-- Add gpio pin that will reset esp32 to boot from factory partition
-- Add nvs save and retrive wifi credentials and ota info
-- Add default ota server with list of examples to download???
+- Add gpio pin that will reset esp32 to boot from factory partition (done)
+- Add nvs save and retrive wifi credentials and ota info (done)
