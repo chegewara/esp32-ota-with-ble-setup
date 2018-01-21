@@ -20,24 +20,24 @@
 
 #define EXAMPLE_WIFI_SSID
 #define EXAMPLE_WIFI_PASS
-#define OTA_SERVER_IP   "esp32.chege.eu.org"//"192.168.1.23"//
+/*#define OTA_SERVER_IP   "esp32.chege.eu.org"
 #define EXAMPLE_SERVER_PORT "80"
-#define EXAMPLE_PATH "examples"//"app-template.bin"//
-#define EXAMPLE_FILENAME "ota.bin"//"app-template.bin"//
+#define EXAMPLE_PATH "examples"
+#define EXAMPLE_FILENAME "ota.bin"*/
 #define BUFFSIZE 1024
 #define TEXT_BUFFSIZE 1024
 const int CONNECTED_BIT = BIT0;
 
-std::string ssid;// = "Orange-8F54";
-std::string pass;// = "33413006";
+std::string ssid;
+std::string pass;
 
 typedef struct {
-	std::string ip;
-	std::string domain;
-	std::string port;
-	std::string path;
-	std::string file_name;
-} connection_info_t;
+	char ip[16];
+	char domain[64];
+	char port[16];
+	char path[64];
+	char file_name[128];
+} ota_info_t ;
 
 static EventGroupHandle_t wifi_event_group;
 
@@ -51,7 +51,7 @@ static int binary_file_length = 0;
 /*socket id*/
 static int socket_id = -1;
 static char http_request[64] = {0};
-static connection_info_t connectionInfo;
+static ota_info_t* otaInfo;
 static void __attribute__((noreturn)) task_fatal_error()
 {
     ESP_LOGE(TAG, "Exiting task due to fatal error...");
@@ -65,7 +65,6 @@ static void __attribute__((noreturn)) task_fatal_error()
 
 static int read_until(char *buffer, char delim, int len)
 {
-//  /*TODO: delim check,buffer check,further: do an buffer length limited*/
     int i = 0;
     while (buffer[i] != delim && i < len) {
         ++i;
@@ -104,11 +103,12 @@ static bool read_past_http_header(char text[], int total_len, esp_ota_handle_t u
     }
     return false;
 }
-    ip_addr_t addr;
+
+ip_addr_t addr;
 bool bDNSFound = false;
 static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *callback_arg)
 {
-    ESP_LOGI("ota", "%sfound host ip %s", ipaddr == NULL?"NOT ":"", OTA_SERVER_IP);
+    ESP_LOGI("ota", "%sfound host ip %s", ipaddr == NULL?"NOT ":"", otaInfo->domain);
     if(ipaddr == NULL)
     	task_fatal_error();
     addr = *ipaddr;
@@ -118,7 +118,7 @@ static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *callba
             ip4_addr2(&addr.u_addr.ip4),
             ip4_addr3(&addr.u_addr.ip4),
             ip4_addr4(&addr.u_addr.ip4),
-			OTA_SERVER_IP);
+			otaInfo->domain);
     vTaskDelay(2000/portTICK_PERIOD_MS);
 }
 
@@ -134,15 +134,15 @@ static bool connect_to_http_server()
 	IP_ADDR4( &addr1, 8,8,8,8 );   // DNS server 1
 	dns_setserver(1, &addr1);
 
-	err_t err = dns_gethostbyname(OTA_SERVER_IP, &addr, &dns_found_cb, NULL);
+	err_t err = dns_gethostbyname(otaInfo->domain, &addr, &dns_found_cb, NULL);
 
     while( !bDNSFound ){
     	vTaskDelay(150/portTICK_PERIOD_MS);
     }
 
-    inet_pton(AF_INET, connectionInfo.ip.c_str(), &addr.u_addr.ip4);
-    ESP_LOGD(TAG, "Server IP: %d Server Port:%s", addr.u_addr.ip4.addr, EXAMPLE_SERVER_PORT);
-    sprintf(http_request, "GET /%s/%s HTTP/1.1\r\nHost: %s:%s \r\n\r\n", connectionInfo.path.c_str(), connectionInfo.file_name.c_str(), connectionInfo.ip!="" ? connectionInfo.ip.c_str() : connectionInfo.domain.c_str(), connectionInfo.port.c_str());
+    inet_pton(AF_INET, otaInfo->ip, &addr.u_addr.ip4);
+    ESP_LOGD(TAG, "Server IP: %d Server Port:%s", addr.u_addr.ip4.addr, otaInfo->port);
+    sprintf(http_request, "GET /%s/%s HTTP/1.1\r\nHost: %s:%s \r\n\r\n", otaInfo->path, otaInfo->file_name, strlen(otaInfo->ip)!=0 ? otaInfo->ip : otaInfo->domain, otaInfo->port);
     ESP_LOGI(TAG, "request: %s", http_request);
 
     int  http_connect_flag = -1;
@@ -158,7 +158,7 @@ static bool connect_to_http_server()
     memset(&sock_info, 0, sizeof(struct sockaddr_in));
     sock_info.sin_family = AF_INET;
     sock_info.sin_addr.s_addr = addr.u_addr.ip4.addr;
-    sock_info.sin_port = htons(atoi(EXAMPLE_SERVER_PORT));
+    sock_info.sin_port = htons(atoi(otaInfo->port));
 
     // connect to http server
     http_connect_flag = connect(socket_id, (struct sockaddr *)&sock_info, sizeof(sock_info));
@@ -311,8 +311,12 @@ static void initialise_wifi(void)
     ESP_ERROR_CHECK( esp_wifi_set_config(ESP_IF_WIFI_STA, &sta_config) );
     ESP_ERROR_CHECK( esp_wifi_start() );
 }
+#include "CPPNVS.h"
+#define WIFIINFO "wifi_info"
+#define OTAINFO "ota_info"
 
-void ota_app_main(void* conn=nullptr, std::string wifi_ssid="", std::string wifi_pass="")
+//void ota_app_main()
+void ota_app_main(void* conn, std::string wifi_ssid, std::string wifi_pass)
 {
     // Initialize NVS.
     esp_err_t err = nvs_flash_init();
@@ -328,10 +332,21 @@ void ota_app_main(void* conn=nullptr, std::string wifi_ssid="", std::string wifi
     if(wifi_ssid!=""){
     	ssid = wifi_ssid;
     	pass = wifi_pass;
-    }
+    }//else{
+/*    	typedef struct {
+    		char ssid[32];
+    		char password[64];
+    	} wifi_info_t;
+    	wifi_info_t wifi;
+
+    	NVS* otaNVS = new NVS("ota_nvs");
+		size_t size = sizeof(wifi_info_t);
+		otaNVS->get(WIFIINFO, (uint8_t*)&wifi, size);*/
+
+ //   }
     if(conn!=nullptr){
-    	connectionInfo = *((connection_info_t*)conn);
-        ESP_LOGI(TAG, "GET /%s/%s HTTP/1.1\r\nHost: %s:%s \r\n\r\n", connectionInfo.path.c_str(), connectionInfo.file_name.c_str(), connectionInfo.domain.c_str(), connectionInfo.port.c_str());
+    	otaInfo = (ota_info_t*)conn;
+        ESP_LOGI(TAG, "GET /%s/%s HTTP/1.1\r\nHost: %s:%s \r\n\r\n", otaInfo->path, otaInfo->file_name, otaInfo->domain, otaInfo->port);
     }
     initialise_wifi();
 
